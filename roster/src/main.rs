@@ -1,9 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
-use std::io;
-use std::fs::OpenOptions;
+use std::fs::{self, OpenOptions};
+use std::io::{self, Write};
 use std::path::Path;
-use csv::{Reader, Writer};
 use chrono::NaiveDate;
 use chrono::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -21,6 +20,7 @@ struct Person {
 struct RosterGenerator {
     used_rosters: HashSet<String>,
     date_to_rosters: HashMap<NaiveDate, Vec<String>>,
+    people: Vec<Person>,
 }
 
 impl RosterGenerator {
@@ -28,52 +28,99 @@ impl RosterGenerator {
         Self {
             used_rosters: HashSet::new(),
             date_to_rosters: HashMap::new(),
+            people: Vec::new(),
         }
     }
 
-    fn load_existing_data(&mut self, filename: &str) -> Result<(), Box<dyn Error>> {
+    fn load_existing_markdown(&mut self, filename: &str) -> Result<(), Box<dyn Error>> {
         if !Path::new(filename).exists() {
             return Ok(());
         }
         
-        let mut rdr = Reader::from_path(filename)?;
-
-        for record in rdr.deserialize() {
-            let person: Person = record?;
-            
-            // Parse birth date
-            let birth_date = NaiveDate::parse_from_str(&person.birth_date, "%m/%d/%Y")?;
-            
-            // Store the existing roster
-            self.used_rosters.insert(person.roster.clone());
-            
-            // Add to date_to_rosters mapping
-            self.date_to_rosters
-                .entry(birth_date)
-                .or_insert_with(Vec::new)
-                .push(person.roster.clone());
+        let content = fs::read_to_string(filename)?;
+        let lines: Vec<&str> = content.lines().collect();
+        
+        // Find the table start
+        let mut table_start = 0;
+        let mut found_table = false;
+        
+        for (i, line) in lines.iter().enumerate() {
+            if line.starts_with("| Name | Roster |") {
+                if let Some(next_line) = lines.get(i + 1) {
+                    if next_line.contains("---") || next_line.contains(":---") {
+                        found_table = true;
+                        table_start = i + 2;
+                        break;
+                    }
+                }
+            }
         }
-
-        println!("Loaded {} existing rosters from {}", self.used_rosters.len(), filename);
+        
+        if !found_table {
+            println!("No valid table found in {}", filename);
+            return Ok(());
+        }
+        
+        // Parse table rows
+        for line in &lines[table_start..] {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || !trimmed.starts_with('|') {
+                continue;
+            }
+            
+            let columns: Vec<&str> = trimmed.split('|')
+                .skip(1) // Skip empty before first |
+                .filter(|s| !s.trim().is_empty())
+                .map(|s| s.trim())
+                .collect();
+            
+            if columns.len() >= 4 {
+                // Remove markdown formatting if present
+                let name = columns[0].trim_matches('*').trim().to_string();
+                let roster = columns[1].trim_matches('*').trim().to_string();
+                let birth_date = columns[2].to_string();
+                let times_selected = columns[3].parse().unwrap_or(0);
+                
+                // Parse birth date for internal tracking
+                if let Ok(parsed_date) = NaiveDate::parse_from_str(&birth_date, "%m/%d/%Y") {
+                    self.used_rosters.insert(roster.clone());
+                    self.date_to_rosters
+                        .entry(parsed_date)
+                        .or_default()
+                        .push(roster.clone());
+                }
+                
+                let person = Person {
+                    name,
+                    roster,
+                    birth_date,
+                    times_selected,
+                };
+                
+                self.people.push(person);
+            }
+        }
+        
+        println!("Loaded {} existing rosters from {}", self.people.len(), filename);
         Ok(())
     }
 
     fn generate_filename(&self, file_type: &str) -> String {
         let now = Local::now();
         let datetime = now.format("%Y_%m_%d_%H%M%S").to_string();
-        format!("{}_{}.csv", file_type, datetime)
+        format!("{}_{}.md", file_type, datetime)
     }
 
-    fn list_existing_files(&self) -> Result<Vec<String>, Box<dyn Error>> {
+    fn list_existing_markdown_files(&self) -> Result<Vec<String>, Box<dyn Error>> {
         let mut files = Vec::new();
         
-        for entry in std::fs::read_dir(".")? {
+        for entry in fs::read_dir(".")? {
             let entry = entry?;
             let path = entry.path();
             
             if path.is_file() {
                 if let Some(extension) = path.extension() {
-                    if extension == "csv" {
+                    if extension == "md" || extension == "markdown" {
                         if let Some(filename) = path.file_name() {
                             if let Some(filename_str) = filename.to_str() {
                                 files.push(filename_str.to_string());
@@ -89,19 +136,14 @@ impl RosterGenerator {
     }
 
     fn generate_roster(&mut self, birth_date: NaiveDate) -> String {
-        // Check if we already have rosters for this birth date
         if let Some(existing_rosters) = self.date_to_rosters.get(&birth_date) {
-            // If this is not the first person with this birth date,
-            // we need to generate a different roster
             if !existing_rosters.is_empty() {
                 let mut attempts = 0;
                 
-                // Keep generating until we find a unique roster for this date
                 while attempts < 1000 {
-                    // Generate roster with salt (attempt number) to get different results
                     let mut hasher = DefaultHasher::new();
                     birth_date.hash(&mut hasher);
-                    attempts.hash(&mut hasher); // Use attempt count as salt
+                    attempts.hash(&mut hasher);
                     let hash = hasher.finish();
                     
                     let base: u64 = 26;
@@ -115,7 +157,6 @@ impl RosterGenerator {
                         current_hash /= base;
                     }
                     
-                    // Check if this roster is unique globally AND not already used for this date
                     if !self.used_rosters.contains(&roster) && !existing_rosters.contains(&roster) {
                         return roster;
                     }
@@ -123,7 +164,7 @@ impl RosterGenerator {
                     attempts += 1;
                 }
                 
-                // Fallback: sequential approach if hash collisions persist
+                // Fallback
                 let mut roster_num = self.used_rosters.len() as u64;
                 let base: u64 = 26;
                 
@@ -148,7 +189,7 @@ impl RosterGenerator {
             }
         }
 
-        // First person with this birth date - generate initial roster
+        // First person with this birth date
         let mut hasher = DefaultHasher::new();
         birth_date.hash(&mut hasher);
         let hash = hasher.finish();
@@ -164,7 +205,6 @@ impl RosterGenerator {
             current_hash /= base;
         }
         
-        // Ensure uniqueness
         let mut attempts = 0;
         let mut final_roster = roster;
         
@@ -191,11 +231,9 @@ impl RosterGenerator {
         final_roster
     }
 
-    fn add_person_to_csv(&mut self, filename: &str, name: &str, birth_date_str: &str) -> Result<Person, Box<dyn Error>> {
-        // Parse birth date
+    fn add_person(&mut self, name: &str, birth_date_str: &str) -> Result<Person, Box<dyn Error>> {
         let birth_date = NaiveDate::parse_from_str(birth_date_str, "%m/%d/%Y")?;
         
-        // Generate roster
         let roster = self.generate_roster(birth_date);
         
         let new_person = Person {
@@ -205,141 +243,211 @@ impl RosterGenerator {
             times_selected: 0,
         };
 
-        // Update our mappings
         self.used_rosters.insert(roster.clone());
         self.date_to_rosters
             .entry(birth_date)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(roster.clone());
-
-        // Check if file exists and is empty to determine if we need header
-        let needs_header = !Path::new(filename).exists() || 
-                          std::fs::metadata(filename)?.len() == 0;
-
-        // Append to CSV file
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(filename)?;
         
-        let mut wtr = Writer::from_writer(file);
-        
-        // Write header if needed
-        if needs_header {
-            wtr.write_record(&["Name", "Roster", "Birth Date", "Times Selected"])?;
-        }
-        
-        wtr.write_record(&[&new_person.name, &new_person.roster, &new_person.birth_date, &new_person.times_selected.to_string()])?;
-        wtr.flush()?;
+        self.people.push(new_person.clone());
 
         Ok(new_person)
+    }
+
+    fn save_to_markdown(&self, filename: &str) -> Result<(), Box<dyn Error>> {
+        let mut file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(filename)?;
+        
+        // Header
+        writeln!(file, "# Roster Registry")?;
+        writeln!(file)?;
+        writeln!(file, "*Generated: {}*", Local::now().format("%B %d, %Y at %H:%M:%S"))?;
+        writeln!(file, "*Total Entries: {}*", self.people.len())?;
+        writeln!(file)?;
+        
+        // Table
+        writeln!(file, "## Roster List")?;
+        writeln!(file)?;
+        writeln!(file, "| Name | Roster | Birth Date | Times Selected |")?;
+        writeln!(file, "| :--- | :----- | :--------- | :------------- |")?;
+        
+        for person in &self.people {
+            writeln!(
+                file, 
+                "| {} | **{}** | {} | {} |", 
+                person.name, 
+                person.roster, 
+                person.birth_date, 
+                person.times_selected
+            )?;
+        }
+        
+        writeln!(file)?;
+        
+        // Statistics
+        writeln!(file, "## Statistics")?;
+        writeln!(file)?;
+        writeln!(file, "- **Total People:** {}", self.people.len())?;
+        writeln!(file, "- **Unique Birth Dates:** {}", self.date_to_rosters.len())?;
+        
+        if !self.people.is_empty() {
+            let mut month_counts = [0; 12];
+            for person in &self.people {
+                if let Ok(date) = NaiveDate::parse_from_str(&person.birth_date, "%m/%d/%Y") {
+                    // month() returns 1-12, subtract 1 for array index
+                    let month_index = (date.month() as usize) - 1;
+                    month_counts[month_index] += 1;
+                }
+            }
+            
+            if let Some((max_month, _)) = month_counts.iter().enumerate().max_by_key(|&(_, &count)| count) {
+                let month_name = match max_month + 1 {
+                    1 => "January", 2 => "February", 3 => "March", 4 => "April",
+                    5 => "May", 6 => "June", 7 => "July", 8 => "August",
+                    9 => "September", 10 => "October", 11 => "November", 12 => "December",
+                    _ => "Unknown",
+                };
+                writeln!(file, "- **Most Common Birth Month:** {}", month_name)?;
+            }
+        }
+        
+        writeln!(file)?;
+        writeln!(file, "---")?;
+        writeln!(file, "*Generated by Roster Generator v0.1.0*")?;
+        
+        Ok(())
     }
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
     let mut generator = RosterGenerator::new();
-    let filename;
     
-    println!("Roster Generator");
+    println!("╔══════════════════════════════════════╗");
+    println!("║      Markdown Roster Generator       ║");
+    println!("╚══════════════════════════════════════╝");
+    println!();
     println!("Choose option:");
-    println!("1. Create new citizens file (citizens_yyyy_mm_dd_HHMMSS.csv)");
-    println!("2. Create new workers file (workers_yyyy_mm_dd_HHMMSS.csv)");
-    println!("3. Resume existing file");
+    println!("1. Create new citizens registry");
+    println!("2. Create new workers registry");
+    println!("3. Load existing registry");
     
     let mut choice = String::new();
     io::stdin().read_line(&mut choice)?;
     
-    match choice.trim() {
+    let filename = match choice.trim() {
         "1" => {
-            filename = generator.generate_filename("citizens");
-            println!("Using filename: {}", filename);
+            let filename = generator.generate_filename("citizens");
+            println!("\n📄 Creating new citizens registry: {}", filename);
+            filename
         }
         "2" => {
-            filename = generator.generate_filename("workers");
-            println!("Using filename: {}", filename);
+            let filename = generator.generate_filename("workers");
+            println!("\n📄 Creating new workers registry: {}", filename);
+            filename
         }
         "3" => {
-            // List existing CSV files
-            let files = generator.list_existing_files()?;
-            
-            if files.is_empty() {
-                println!("No existing CSV files found. Creating new citizens file.");
-                filename = generator.generate_filename("citizens");
-            } else {
-                println!("Existing CSV files:");
-                for (i, file) in files.iter().enumerate() {
-                    println!("{}. {}", i + 1, file);
-                }
-                
-                println!("Enter the number of the file to resume:");
-                let mut file_choice = String::new();
-                io::stdin().read_line(&mut file_choice)?;
-                
-                if let Ok(choice_num) = file_choice.trim().parse::<usize>() {
-                    if choice_num >= 1 && choice_num <= files.len() {
-                        filename = files[choice_num - 1].clone();
-                        println!("Resuming file: {}", filename);
+            match generator.list_existing_markdown_files() {
+                Ok(files) => {
+                    if files.is_empty() {
+                        println!("\n⚠️  No existing registries found.");
+                        let filename = generator.generate_filename("citizens");
+                        println!("   Creating new registry: {}", filename);
+                        filename
                     } else {
-                        println!("Invalid choice. Creating new citizens file.");
-                        filename = generator.generate_filename("citizens");
+                        println!("\n📂 Existing registries:");
+                        for (i, file) in files.iter().enumerate() {
+                            println!("   {}. {}", i + 1, file);
+                        }
+                        
+                        println!("\nEnter the number of the registry to load:");
+                        let mut file_choice = String::new();
+                        io::stdin().read_line(&mut file_choice)?;
+                        
+                        if let Ok(choice_num) = file_choice.trim().parse::<usize>() {
+                            if choice_num >= 1 && choice_num <= files.len() {
+                                let filename = files[choice_num - 1].clone();
+                                if let Err(e) = generator.load_existing_markdown(&filename) {
+                                    println!("⚠️  Error loading file: {}", e);
+                                    println!("   Creating new registry instead.");
+                                    generator.generate_filename("citizens")
+                                } else {
+                                    println!("✓ Loaded registry: {}", filename);
+                                    filename
+                                }
+                            } else {
+                                println!("⚠️  Invalid choice. Creating new registry.");
+                                generator.generate_filename("citizens")
+                            }
+                        } else {
+                            println!("⚠️  Invalid input. Creating new registry.");
+                            generator.generate_filename("citizens")
+                        }
                     }
-                } else {
-                    println!("Invalid input. Creating new citizens file.");
-                    filename = generator.generate_filename("citizens");
+                }
+                Err(e) => {
+                    println!("⚠️  Error listing files: {}", e);
+                    println!("   Creating new registry.");
+                    generator.generate_filename("citizens")
                 }
             }
         }
         _ => {
-            println!("Invalid choice. Defaulting to new citizens file.");
-            filename = generator.generate_filename("citizens");
+            println!("⚠️  Invalid choice. Creating new citizens registry.");
+            generator.generate_filename("citizens")
         }
-    }
+    };
     
-    // Load existing data from CSV to learn used rosters (if file exists)
-    if let Err(_e) = generator.load_existing_data(&filename) {
-        println!("Starting with new file: {}", filename);
-    } else {
-        println!("Resumed existing file: {} ({} rosters loaded)", filename, generator.used_rosters.len());
-    }
-    
-    println!("\nEnter person details (or 'quit' to exit):");
+    println!("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!("Enter person details (type 'save' to finish):");
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     
     loop {
-        println!("\nEnter name:");
+        println!("\n👤 Name (or 'save' to finish):");
         let mut name = String::new();
         io::stdin().read_line(&mut name)?;
         let name = name.trim();
         
-        if name.eq_ignore_ascii_case("quit") {
+        if name.eq_ignore_ascii_case("save") {
             break;
         }
         
         if name.is_empty() {
-            println!("Name cannot be empty. Please try again.");
+            println!("❌ Name cannot be empty.");
             continue;
         }
         
-        println!("Enter birth date (MM/DD/YYYY):");
+        println!("📅 Birth Date (MM/DD/YYYY):");
         let mut birth_date = String::new();
         io::stdin().read_line(&mut birth_date)?;
         let birth_date = birth_date.trim();
         
-        match generator.add_person_to_csv(&filename, name, birth_date) {
+        match generator.add_person(name, birth_date) {
             Ok(person) => {
-                println!("\n✓ Successfully added to CSV:");
-                println!("Name: {}", person.name);
-                println!("Roster: {}", person.roster);
-                println!("Birth Date: {}", person.birth_date);
-                println!("Times Selected: {}", person.times_selected);
-                println!("\nCSV format: {},{},{},{}", person.name, person.roster, person.birth_date, person.times_selected);
+                println!("\n✅ Successfully added:");
+                println!("   ┌─────────────────────┐");
+                println!("   │ Name: {:16} │", person.name);
+                println!("   │ Roster: {:14} │", person.roster);
+                println!("   │ Birth Date: {:11} │", person.birth_date);
+                println!("   └─────────────────────┘");
             }
             Err(e) => {
-                println!("Error: {}", e);
-                println!("Please try again with valid date format (MM/DD/YYYY)");
+                println!("❌ Error: {}", e);
+                println!("   Please try again with valid date format (MM/DD/YYYY)");
             }
         }
     }
     
-    println!("Goodbye! File saved as: {}", filename);
+    println!("\n💾 Saving registry...");
+    generator.save_to_markdown(&filename)?;
+    
+    println!("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!("✅ Registry saved successfully!");
+    println!("📄 File: {}", filename);
+    println!("👥 Total entries: {}", generator.people.len());
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    
     Ok(())
 }
