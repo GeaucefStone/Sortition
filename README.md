@@ -42,9 +42,11 @@ If you stick with ARM or preferably RISC-V, you may guarantee security in the lo
 
 **Short Term**
 
-1. Generate tables in Markdown files for better human readability
+1. Erase or modify deprecated code (on-going)
 
-2. Erase or modify deprecated code (on-going)
+2. Generate tables in Markdown files for better human readability (Complete)
+
+3. Tie a specific folder to both apps to eliminate the need to copy and paste generated files. 
 
 **Long Term**
 
