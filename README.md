@@ -46,9 +46,11 @@ If you stick with ARM or preferably RISC-V, you may guarantee security in the lo
 
 2. Generate tables in Markdown files for better human readability (Complete)
 
-3. Tie a specific folder to both apps to eliminate the need to copy and paste generated files. 
+3. Tie a specific folder to both apps to eliminate the need to copy and paste generated files. (Complete)
 
 **Long Term**
+
+Limit individual files by 1000 people, and enable Roster Selector to scan multiple files simultaneously. An extra directory may be required for organization. 
 
 Current: Rust (prototype)
 Future: SPARK/Ada (production)
