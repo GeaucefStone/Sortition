@@ -1,6 +1,10 @@
 # SDR Sortition Service
 
+## Copyright Notice
+Copyright © 2024 Geaucef Stone. All rights reserved under the terms of the GNU GPL v3.
+
 ## License
+
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
 the Free Software Foundation, either version 3 of the License, or
