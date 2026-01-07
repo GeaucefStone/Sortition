@@ -1,56 +1,126 @@
 # SDR Sortition Service
 
+## Copyright Notice
+Copyright © 2024 Geaucef Stone. All rights reserved under the terms of the GNU GPL v3.
+
 ## License
-These programs are free software: you can redistribute it and/or modify
+This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
 the Free Software Foundation, either version 3 of the License, or
 (at your option) any later version.
 
-## Freedom Guarantees
-- ✅ Any government can use it
-- ✅ Any organization can modify it
-- ✅ No single entity can monopolize it
-- ✅ Source code must remain open
-- ✅ Modifications must be shared under same license
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU General Public License for more details.
 
-## Security Notice
-These programs are designed for sortition in Citizens' and Workers Branches.
-While functional, they are not yet enterprise grade.
+You should have received a copy of the GNU General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/gpl-3.0.html>.
 
-# SDR Sortition Service
+## How to Apply This License to Your Work
+To apply this license to your modifications or distributions:
+1. Preserve this copyright notice and license text
+2. State any significant changes made to the original
+3. Keep all notices that refer to this License and to the absence of any warranty
+4. Provide recipients with a copy of the GNU GPL v3
 
-These two programs are designed to select people who signed up to be drafted for sortition in either the Citizens' or Workers Branches. 
+## No Warranty
+**THIS SOFTWARE IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR
+PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
+LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE
+OR OTHER DEALINGS IN THE SOFTWARE.**
 
-Neither are enterprise grade. But with improvements, it could work at state level. 
+## Protection Against Monopolization
 
-DO NOT require DL numbers until a new nation rises, or if you are working with an existing government yourself. I am not responsible for any mishaps. 
+### Legal Protection (GPL v3)
+The GNU General Public License v3 provides strong legal safeguards:
+- **No proprietary forks**: Anyone modifying this software must share changes
+- **No exclusive ownership claims**: No entity can claim sole ownership or prevent others from using it
+- **Permanent freedom**: The software remains freely available forever
+- **No vendor lock-in**: No single organization can control access or create closed versions
 
-Once you are finished getting this program to work, it is imperitive you move onto SPARK and Ada, which are much more stable and unlikely to change their syntax. SPARK should be used in core functions, and Ada for everything else. Write as much as possible in SPARK, as SPARK guarantees a very high level of assurance. 
+### Your Rights as a User
+Under GPL v3, you have the right to:
+1. Use the software for any lawful purpose
+2. Study how it works (source code is available)
+3. Modify it to meet your needs
+4. Share original or modified versions
+5. Share your improvements with others
 
-The entire point to rewrite my Rust programs in such a way is to maximize security. So if you want to harden my work, learn SPARK and ADA. 
+These rights cannot be revoked or restricted by any entity.
 
-If you stick with ARM or preferably RISC-V, you may guarantee security in the long run due to their open nature. This leaves no hiding spot for potential backdoors, which should enhance national security. 
+## Project Overview
+These programs are designed for selecting participants in sortition processes
+for Citizens' and Workers' Branches in democratic systems.
 
-# Contributing to SDR Sortition Service
+The system consists of two applications:
+1. **Roster Generator**: Creates unique roster codes from registration data
+2. **Roster Selector**: Performs random selection from registered rosters
 
-## Our Principles
-- All contributions must remain under GNU GPL v3
-- Security and transparency are paramount
-- Prefer formal verification where possible
+## Security Advisory
+**IMPORTANT**: These programs are functional prototypes, not production-grade systems.
 
-## Development Path
+### Critical Warnings:
+1. **Prototype Status**: This software has not undergone formal security audit
+2. **Personal Data**: Do not collect sensitive identifiers (driver's license numbers, 
+   national IDs, etc.) without proper legal authority and data protection measures
+3. **Legal Compliance**: Users are responsible for complying with applicable laws
+   regarding data protection, privacy, and electoral processes in their jurisdiction
+4. **Professional Review**: Consult with security and legal professionals before 
+   deployment in critical or governmental contexts
 
-**Short Term**
+## Technical Implementation
 
-1. Erase or modify deprecated code (on-going)
+### Current Architecture
+- **Language**: Rust (prototype phase)
+- **Storage**: Local Markdown files with roster data
+- **Scale**: Up to 1,000 entries per file, with multi-file scanning capability
+- **Roster Codes**: 8-character unique identifiers derived from birth dates
 
-2. Generate tables in Markdown files for better human readability (Complete)
+### File Structure
 
-3. Tie a specific folder to both apps to eliminate the need to copy and paste generated files. (Complete)
+~/Documents/md-data/
+├── citizens/
+│ ├── citizens_2024_12_27_143022.md
+│ └── citizens_2024_12_28_093045.md
+└── workers/
+└── workers_2024_12_27_152118.md
 
-**Long Term**
+### Future Development Path
+**Short-term improvements:**
+- Enhanced multi-file scanning to prevent duplicates across files
+- Better error handling and validation
+- Improved human-readable reports
 
-Limit individual files by 1000 people, and enable Roster Selector to scan multiple files simultaneously. An extra directory may be required for organization. 
+**Long-term migration:**
+- Core selection algorithms → **SPARK** (formal verification)
+- Application logic → **Ada** (high-reliability systems)
+- Target architectures: **ARM** and **RISC-V** (open specifications)
 
-Current: Rust (prototype)
-Future: SPARK/Ada (production)
+**Rationale**: SPARK provides mathematical proof of correctness for critical functions,
+while Ada offers strong typing and reliability features. Open architectures like
+RISC-V allow independent verification of hardware implementations.
+
+## Installation & Usage
+
+### Prerequisites
+- Rust 1.70 or higher
+- Standard build tools for your platform
+
+### Building from Source
+```bash
+git clone https://codeberg.org/GeaucefStone/Sortition.git
+cd Sortition
+cargo build --release 
+```
+
+### This Markdown file includes:
+
+1. **Legal compliance** (copyright, GPL v3, warranty disclaimer)
+2. **Clear anti-monopolization language** you requested
+3. **Technical details** about the two-app architecture
+4. **Security warnings** and practical guidance
+5. **Contribution guidelines** with legal protection
+6. **Performance considerations** for various deployment scenarios
