@@ -17,12 +17,32 @@ struct Person {
     times_selected: u32,
 }
 
+impl PartialEq for Person {
+    fn eq(&self, other: &Self) -> bool {
+        self.roster == other.roster
+    }
+}
+
+impl Eq for Person {}
+
+impl Hash for Person {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.roster.hash(state);
+    }
+}
+
 struct RosterGenerator {
     used_rosters: HashSet<String>,
     date_to_rosters: HashMap<NaiveDate, Vec<String>>,
-    people: Vec<Person>,
+    people: Vec<Person>,  // People in current working batch
+    all_people: HashSet<Person>,  // All unique people loaded from all files in this registry type
     base_dir: PathBuf,
-    registry_type: String, // "citizens" or "workers"
+    registry_type: String,
+    current_file_index: u32,
+    max_people_per_file: usize,
+    recently_saved_files: Vec<String>,  // Track files saved in this session
+    current_filename: Option<String>,   // Track which file we're currently working on
+    date_folder: Option<String>,        // Selected date folder (e.g., "citizens-2024-12-20")
 }
 
 impl RosterGenerator {
@@ -41,8 +61,14 @@ impl RosterGenerator {
             used_rosters: HashSet::new(),
             date_to_rosters: HashMap::new(),
             people: Vec::new(),
+            all_people: HashSet::new(),
             base_dir,
             registry_type: registry_type.to_string(),
+            current_file_index: 1,
+            max_people_per_file: 10,
+            recently_saved_files: Vec::new(),
+            current_filename: None,
+            date_folder: None,
         })
     }
 
@@ -70,6 +96,20 @@ impl RosterGenerator {
             println!("✅ Registry directory already exists: {:?}", registry_dir);
         }
         
+        // Create date folder if one is selected
+        if let Some(date_folder) = &self.date_folder {
+            let date_dir = self.get_date_folder_dir();
+            println!("🔧 Checking if date folder exists: {:?}", date_dir);
+            
+            if !date_dir.exists() {
+                println!("📁 Creating date folder: {:?}", date_dir);
+                fs::create_dir_all(&date_dir)?;
+                println!("✅ Created: {:?}", date_dir);
+            } else {
+                println!("✅ Date folder already exists: {:?}", date_dir);
+            }
+        }
+        
         Ok(())
     }
 
@@ -77,17 +117,204 @@ impl RosterGenerator {
         self.base_dir.join(&self.registry_type)
     }
 
-    fn load_existing_markdown(&mut self, filename: &str) -> Result<(), Box<dyn Error>> {
-        // Ensure directories exist first
-        self.ensure_directories()?;
+    fn get_date_folder_dir(&self) -> PathBuf {
+        if let Some(date_folder) = &self.date_folder {
+            self.get_registry_dir().join(date_folder)
+        } else {
+            self.get_registry_dir()
+        }
+    }
+
+    fn get_current_working_dir(&self) -> PathBuf {
+        self.get_date_folder_dir()
+    }
+
+    fn list_date_folders(&self) -> Result<Vec<String>, Box<dyn Error>> {
+        let registry_dir = self.get_registry_dir();
         
-        let filepath = self.get_registry_dir().join(filename);
+        if !registry_dir.exists() {
+            return Ok(Vec::new());
+        }
         
-        println!("📂 Looking for file: {:?}", filepath);
+        let mut folders = Vec::new();
+        
+        for entry in fs::read_dir(&registry_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            
+            if path.is_dir() {
+                if let Some(dir_name) = path.file_name() {
+                    if let Some(dir_name_str) = dir_name.to_str() {
+                        // Check if it matches the pattern: registry_type-YYYY-MM-DD
+                        if dir_name_str.starts_with(&format!("{}-", self.registry_type)) {
+                            folders.push(dir_name_str.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Sort by date (newest first)
+        folders.sort_by(|a, b| b.cmp(a));
+        
+        Ok(folders)
+    }
+
+    fn create_date_folder(&mut self, date: Option<NaiveDate>) -> Result<String, Box<dyn Error>> {
+        let today = date.unwrap_or_else(|| Local::now().date_naive());
+        let folder_name = format!("{}-{}", self.registry_type, today.format("%Y-%m-%d"));
+        
+        let folder_path = self.get_registry_dir().join(&folder_name);
+        
+        if !folder_path.exists() {
+            println!("📁 Creating date folder: {}", folder_name);
+            fs::create_dir_all(&folder_path)?;
+            println!("✅ Created: {}", folder_name);
+        } else {
+            println!("📁 Using existing date folder: {}", folder_name);
+        }
+        
+        self.date_folder = Some(folder_name.clone());
+        
+        Ok(folder_name)
+    }
+
+    fn load_all_existing_files_across_all_folders(&mut self) -> Result<(), Box<dyn Error>> {
+        // Clear existing data
+        self.used_rosters.clear();
+        self.date_to_rosters.clear();
+        self.all_people.clear();
+        
+        // Get all date folders for this registry type
+        let date_folders = self.list_date_folders()?;
+        
+        // Also include the root registry directory (for files not in date folders)
+        let mut all_dirs = vec![self.get_registry_dir()];
+        for folder in &date_folders {
+            all_dirs.push(self.get_registry_dir().join(folder));
+        }
+        
+        let mut total_files = 0;
+        
+        for dir in all_dirs {
+            if !dir.exists() {
+                continue;
+            }
+            
+            // List markdown files in this directory
+            let mut files_in_dir = Vec::new();
+            for entry in fs::read_dir(&dir)? {
+                let entry = entry?;
+                let path = entry.path();
+                
+                if path.is_file() {
+                    if let Some(extension) = path.extension() {
+                        if extension == "md" || extension == "markdown" {
+                            if let Some(filename) = path.file_name() {
+                                if let Some(filename_str) = filename.to_str() {
+                                    files_in_dir.push(filename_str.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            for file in &files_in_dir {
+                let filepath = dir.join(file);
+                if filepath.exists() {
+                    println!("📂 Loading data from: {:?}", filepath);
+                    self.load_existing_markdown_from_path(&filepath)?;
+                    total_files += 1;
+                }
+            }
+        }
+        
+        println!("✓ Loaded data from {} file(s) across all folders", total_files);
+        println!("  Unique people loaded: {}", self.all_people.len());
+        Ok(())
+    }
+
+    fn load_existing_markdown_from_path(&mut self, filepath: &PathBuf) -> Result<(), Box<dyn Error>> {
+        if !filepath.exists() {
+            return Ok(());
+        }
+        
+        let content = fs::read_to_string(filepath)?;
+        let lines: Vec<&str> = content.lines().collect();
+        
+        // Find the table start
+        let mut table_start = 0;
+        let mut found_table = false;
+        
+        for (i, line) in lines.iter().enumerate() {
+            if line.starts_with("| Name | Roster |") {
+                if let Some(next_line) = lines.get(i + 1) {
+                    if next_line.contains("---") || next_line.contains(":---") {
+                        found_table = true;
+                        table_start = i + 2;
+                        break;
+                    }
+                }
+            }
+        }
+        
+        if !found_table {
+            return Ok(());
+        }
+        
+        // Parse table rows
+        for line in &lines[table_start..] {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || !trimmed.starts_with('|') {
+                continue;
+            }
+            
+            let columns: Vec<&str> = trimmed.split('|')
+                .skip(1)
+                .filter(|s| !s.trim().is_empty())
+                .map(|s| s.trim())
+                .collect();
+            
+            if columns.len() >= 4 {
+                let name = columns[0].trim_matches('*').trim().to_string();
+                let roster = columns[1].trim_matches('*').trim().to_string();
+                let birth_date = columns[2].to_string();
+                let times_selected = columns[3].parse().unwrap_or(0);
+                
+                // Parse birth date for internal tracking
+                if let Ok(parsed_date) = NaiveDate::parse_from_str(&birth_date, "%m/%d/%Y") {
+                    self.used_rosters.insert(roster.clone());
+                    self.date_to_rosters
+                        .entry(parsed_date)
+                        .or_default()
+                        .push(roster.clone());
+                }
+                
+                let person = Person {
+                    name,
+                    roster,
+                    birth_date,
+                    times_selected,
+                };
+                
+                // Only add if not already present (by roster)
+                self.all_people.insert(person);
+            }
+        }
+        
+        Ok(())
+    }
+
+    fn load_file_for_editing(&mut self, filename: &str) -> Result<(), Box<dyn Error>> {
+        // Clear current working batch
+        self.people.clear();
+        
+        // Load data from the specific file into the current batch
+        let filepath = self.get_current_working_dir().join(filename);
         
         if !filepath.exists() {
-            println!("⚠️  File does not exist: {:?}", filepath);
-            return Ok(());
+            return Err(format!("File not found: {}", filename).into());
         }
         
         let content = fs::read_to_string(&filepath)?;
@@ -110,11 +337,10 @@ impl RosterGenerator {
         }
         
         if !found_table {
-            println!("No valid table found in {}", filename);
             return Ok(());
         }
         
-        // Parse table rows
+        // Parse table rows into current batch
         for line in &lines[table_start..] {
             let trimmed = line.trim();
             if trimmed.is_empty() || !trimmed.starts_with('|') {
@@ -122,26 +348,16 @@ impl RosterGenerator {
             }
             
             let columns: Vec<&str> = trimmed.split('|')
-                .skip(1) // Skip empty before first |
+                .skip(1)
                 .filter(|s| !s.trim().is_empty())
                 .map(|s| s.trim())
                 .collect();
             
             if columns.len() >= 4 {
-                // Remove markdown formatting if present
                 let name = columns[0].trim_matches('*').trim().to_string();
                 let roster = columns[1].trim_matches('*').trim().to_string();
                 let birth_date = columns[2].to_string();
                 let times_selected = columns[3].parse().unwrap_or(0);
-                
-                // Parse birth date for internal tracking
-                if let Ok(parsed_date) = NaiveDate::parse_from_str(&birth_date, "%m/%d/%Y") {
-                    self.used_rosters.insert(roster.clone());
-                    self.date_to_rosters
-                        .entry(parsed_date)
-                        .or_default()
-                        .push(roster.clone());
-                }
                 
                 let person = Person {
                     name,
@@ -154,26 +370,131 @@ impl RosterGenerator {
             }
         }
         
-        println!("Loaded {} existing rosters from {}", self.people.len(), filename);
+        // Set the current filename
+        self.current_filename = Some(filename.to_string());
+        
+        // Extract sequence number from filename
+        let parts: Vec<&str> = filename.split('_').collect();
+        if parts.len() >= 2 {
+            if let Ok(seq_num) = parts[1].parse::<u32>() {
+                self.current_file_index = seq_num;
+            }
+        }
+        
+        println!("📝 Loaded {} people from {}", self.people.len(), filename);
         Ok(())
     }
 
-    fn generate_filename(&self) -> String {
+    fn find_incomplete_files(&self) -> Result<Vec<(String, usize)>, Box<dyn Error>> {
+        let files = self.list_existing_markdown_files()?;
+        let mut incomplete_files = Vec::new();
+        
+        for file in files {
+            let filepath = self.get_current_working_dir().join(&file);
+            if !filepath.exists() {
+                continue;
+            }
+            
+            let content = fs::read_to_string(&filepath)?;
+            let lines: Vec<&str> = content.lines().collect();
+            
+            // Look for the "Entries in this file" line
+            let mut count = 0;
+            for line in &lines {
+                if line.contains("Entries in this file:") {
+                    let parts: Vec<&str> = line.split(':').collect();
+                    if parts.len() >= 2 {
+                        if let Ok(num) = parts[1].trim().trim_matches('*').parse::<usize>() {
+                            count = num;
+                            break;
+                        }
+                    }
+                }
+            }
+            
+            // Also check the table directly
+            if count == 0 {
+                // Find the table and count rows
+                for (i, line) in lines.iter().enumerate() {
+                    if line.starts_with("| Name | Roster |") {
+                        if let Some(next_line) = lines.get(i + 1) {
+                            if next_line.contains("---") || next_line.contains(":---") {
+                                // Count table rows starting from i+2
+                                for row_line in &lines[i+2..] {
+                                    let trimmed = row_line.trim();
+                                    if trimmed.is_empty() || !trimmed.starts_with('|') {
+                                        break;
+                                    }
+                                    count += 1;
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            
+            if count < self.max_people_per_file {
+                incomplete_files.push((file, count));
+            }
+        }
+        
+        // Sort by sequence number
+        incomplete_files.sort_by(|a, b| {
+            let a_parts: Vec<&str> = a.0.split('_').collect();
+            let b_parts: Vec<&str> = b.0.split('_').collect();
+            
+            if a_parts.len() >= 2 && b_parts.len() >= 2 {
+                let a_num = a_parts[1].parse::<u32>().unwrap_or(0);
+                let b_num = b_parts[1].parse::<u32>().unwrap_or(0);
+                a_num.cmp(&b_num)
+            } else {
+                a.0.cmp(&b.0)
+            }
+        });
+        
+        Ok(incomplete_files)
+    }
+
+    fn get_next_file_number(&self) -> Result<u32, Box<dyn Error>> {
+        let files = self.list_existing_markdown_files()?;
+        
+        // Extract numbers from filenames like citizens_001_2024_12_20_120000.md
+        let mut max_number = 0;
+        
+        for file in files {
+            let parts: Vec<&str> = file.split('_').collect();
+            if parts.len() >= 2 {
+                if let Ok(num) = parts[1].parse::<u32>() {
+                    if num > max_number {
+                        max_number = num;
+                    }
+                }
+            }
+        }
+        
+        Ok(max_number + 1)
+    }
+
+    fn generate_filename(&self, sequence: Option<u32>) -> String {
         let now = Local::now();
         let datetime = now.format("%Y_%m_%d_%H%M%S").to_string();
-        format!("{}_{}.md", self.registry_type, datetime)
+        
+        let seq_num = sequence.unwrap_or(self.current_file_index);
+        
+        format!("{}_{:03}_{}.md", self.registry_type, seq_num, datetime)
     }
 
     fn list_existing_markdown_files(&self) -> Result<Vec<String>, Box<dyn Error>> {
-        // Ensure directories exist first
-        self.ensure_directories()?;
+        let working_dir = self.get_current_working_dir();
+        
+        if !working_dir.exists() {
+            return Ok(Vec::new());
+        }
         
         let mut files = Vec::new();
-        let registry_dir = self.get_registry_dir();
         
-        println!("📂 Scanning directory: {:?}", registry_dir);
-        
-        for entry in fs::read_dir(&registry_dir)? {
+        for entry in fs::read_dir(&working_dir)? {
             let entry = entry?;
             let path = entry.path();
             
@@ -190,7 +511,20 @@ impl RosterGenerator {
             }
         }
         
-        files.sort();
+        // Sort by sequence number then by timestamp
+        files.sort_by(|a, b| {
+            let a_parts: Vec<&str> = a.split('_').collect();
+            let b_parts: Vec<&str> = b.split('_').collect();
+            
+            if a_parts.len() >= 2 && b_parts.len() >= 2 {
+                let a_num = a_parts[1].parse::<u32>().unwrap_or(0);
+                let b_num = b_parts[1].parse::<u32>().unwrap_or(0);
+                a_num.cmp(&b_num)
+            } else {
+                a.cmp(b)
+            }
+        });
+        
         Ok(files)
     }
 
@@ -302,25 +636,71 @@ impl RosterGenerator {
             times_selected: 0,
         };
 
+        // Track roster for collision prevention
         self.used_rosters.insert(roster.clone());
         self.date_to_rosters
             .entry(birth_date)
             .or_default()
             .push(roster.clone());
         
+        // Add to current batch
         self.people.push(new_person.clone());
+        
+        // Add to all_people (HashSet ensures uniqueness)
+        self.all_people.insert(new_person.clone());
 
         Ok(new_person)
     }
 
-    fn save_to_markdown(&self, filename: &str) -> Result<(), Box<dyn Error>> {
-        // Ensure directories exist before saving
-        println!("🔧 Ensuring directories exist...");
-        self.ensure_directories()?;
+    fn should_create_new_file(&self) -> bool {
+        self.people.len() >= self.max_people_per_file
+    }
+
+    fn save_current_batch(&mut self) -> Result<String, Box<dyn Error>> {
+        if self.people.is_empty() {
+            return Err("No people to save".into());
+        }
         
-        let filepath = self.get_registry_dir().join(filename);
+        // Determine filename - either use current one or generate new
+        let filename = if let Some(ref current_file) = self.current_filename {
+            // We're overwriting an existing file
+            current_file.clone()
+        } else {
+            // Creating a new file
+            self.generate_filename(Some(self.current_file_index))
+        };
         
-        println!("💾 Attempting to save to: {:?}", filepath);
+        self.save_to_markdown(&filename, &self.people)?;
+        
+        // Track this file for reloading
+        self.recently_saved_files.push(filename.clone());
+        
+        // IMPORTANT: Don't reload the file here since we already have the people in memory
+        // Clearing and reloading would cause duplicates
+        
+        // If this was a new file, increment the counter
+        if self.current_filename.is_none() {
+            self.current_file_index += 1;
+        }
+        
+        // Clear current batch but keep people in all_people
+        self.people.clear();
+        
+        // Clear current filename since we're done with this file
+        self.current_filename = None;
+        
+        Ok(filename)
+    }
+
+    fn save_to_markdown(&self, filename: &str, people_to_save: &[Person]) -> Result<(), Box<dyn Error>> {
+        let filepath = self.get_current_working_dir().join(filename);
+        
+        let overwriting = filepath.exists();
+        
+        println!("💾 Saving batch of {} people to: {}", people_to_save.len(), filename);
+        if overwriting {
+            println!("   (Overwriting existing file)");
+        }
         
         let mut file = OpenOptions::new()
             .create(true)
@@ -328,12 +708,29 @@ impl RosterGenerator {
             .truncate(true)
             .open(&filepath)?;
         
+        // Determine sequence number from filename
+        let mut seq_num = self.current_file_index;
+        let parts: Vec<&str> = filename.split('_').collect();
+        if parts.len() >= 2 {
+            if let Ok(num) = parts[1].parse::<u32>() {
+                seq_num = num;
+            }
+        }
+        
         // Header
         writeln!(file, "# Roster Registry")?;
         writeln!(file)?;
         writeln!(file, "*Registry Type: {}*", self.registry_type)?;
+        writeln!(file, "*File Sequence: {}*", seq_num)?;
+        if let Some(date_folder) = &self.date_folder {
+            writeln!(file, "*Date Folder: {}*", date_folder)?;
+        }
         writeln!(file, "*Generated: {}*", Local::now().format("%B %d, %Y at %H:%M:%S"))?;
-        writeln!(file, "*Total Entries: {}*", self.people.len())?;
+        if overwriting {
+            writeln!(file, "*Updated: {}*", Local::now().format("%B %d, %Y at %H:%M:%S"))?;
+        }
+        writeln!(file, "*Entries in this file: {}*", people_to_save.len())?;
+        writeln!(file, "*Total unique entries in registry: {}*", self.all_people.len())?;
         writeln!(file)?;
         
         // Table
@@ -342,7 +739,7 @@ impl RosterGenerator {
         writeln!(file, "| Name | Roster | Birth Date | Times Selected |")?;
         writeln!(file, "| :--- | :----- | :--------- | :------------- |")?;
         
-        for person in &self.people {
+        for person in people_to_save {
             writeln!(
                 file, 
                 "| {} | **{}** | {} | {} |", 
@@ -358,14 +755,14 @@ impl RosterGenerator {
         // Statistics
         writeln!(file, "## Statistics")?;
         writeln!(file)?;
-        writeln!(file, "- **Total People:** {}", self.people.len())?;
-        writeln!(file, "- **Unique Birth Dates:** {}", self.date_to_rosters.len())?;
+        writeln!(file, "- **People in this file:** {}", people_to_save.len())?;
+        writeln!(file, "- **Unique people in registry:** {}", self.all_people.len())?;
+        writeln!(file, "- **Unique Birth Dates in registry:** {}", self.date_to_rosters.len())?;
         
-        if !self.people.is_empty() {
+        if !people_to_save.is_empty() {
             let mut month_counts = [0; 12];
-            for person in &self.people {
+            for person in people_to_save {
                 if let Ok(date) = NaiveDate::parse_from_str(&person.birth_date, "%m/%d/%Y") {
-                    // month() returns 1-12, subtract 1 for array index
                     let month_index = (date.month() as usize) - 1;
                     month_counts[month_index] += 1;
                 }
@@ -378,7 +775,7 @@ impl RosterGenerator {
                     9 => "September", 10 => "October", 11 => "November", 12 => "December",
                     _ => "Unknown",
                 };
-                writeln!(file, "- **Most Common Birth Month:** {}", month_name)?;
+                writeln!(file, "- **Most Common Birth Month in this file:** {}", month_name)?;
             }
         }
         
@@ -386,8 +783,12 @@ impl RosterGenerator {
         writeln!(file, "---")?;
         writeln!(file, "*Generated by Roster Generator v0.1.0*")?;
         writeln!(file, "*File Location: {:?}*", filepath)?;
+        writeln!(file, "*Limit: {} people per file*", self.max_people_per_file)?;
+        if overwriting {
+            writeln!(file, "*Note: This file was updated*")?;
+        }
         
-        println!("✅ File saved successfully to: {:?}", filepath);
+        println!("✅ Batch saved to: {:?}", filepath);
         Ok(())
     }
 }
@@ -396,7 +797,6 @@ impl RosterGenerator {
 fn get_documents_directory() -> Result<PathBuf, Box<dyn Error>> {
     // Method 1: Use dirs crate
     if let Some(docs) = dirs::document_dir() {
-        println!("📁 Using dirs::document_dir(): {:?}", docs);
         return Ok(docs);
     }
     
@@ -405,7 +805,6 @@ fn get_documents_directory() -> Result<PathBuf, Box<dyn Error>> {
     {
         if let Ok(userprofile) = std::env::var("USERPROFILE") {
             let docs = PathBuf::from(userprofile).join("Documents");
-            println!("📁 Using USERPROFILE/Documents: {:?}", docs);
             if docs.exists() {
                 return Ok(docs);
             }
@@ -416,7 +815,6 @@ fn get_documents_directory() -> Result<PathBuf, Box<dyn Error>> {
     {
         if let Ok(home) = std::env::var("HOME") {
             let docs = PathBuf::from(home).join("Documents");
-            println!("📁 Using HOME/Documents: {:?}", docs);
             if docs.exists() {
                 return Ok(docs);
             }
@@ -427,7 +825,6 @@ fn get_documents_directory() -> Result<PathBuf, Box<dyn Error>> {
     {
         if let Ok(home) = std::env::var("HOME") {
             let docs = PathBuf::from(home).join("Documents");
-            println!("📁 Using HOME/Documents: {:?}", docs);
             if docs.exists() {
                 return Ok(docs);
             }
@@ -435,7 +832,6 @@ fn get_documents_directory() -> Result<PathBuf, Box<dyn Error>> {
     }
     
     // Method 3: Fallback to current directory
-    println!("⚠️  Could not find Documents directory, using current directory");
     std::env::current_dir()
         .map_err(|e| format!("Could not get current directory: {}", e).into())
 }
@@ -443,6 +839,7 @@ fn get_documents_directory() -> Result<PathBuf, Box<dyn Error>> {
 fn main() -> Result<(), Box<dyn Error>> {
     println!("╔══════════════════════════════════════╗");
     println!("║      Markdown Roster Generator       ║");
+    println!("║         (10 people per file)         ║");
     println!("╚══════════════════════════════════════╝");
     println!();
     println!("Choose registry type:");
@@ -482,13 +879,19 @@ fn main() -> Result<(), Box<dyn Error>> {
                 used_rosters: HashSet::new(),
                 date_to_rosters: HashMap::new(),
                 people: Vec::new(),
+                all_people: HashSet::new(),
                 base_dir,
                 registry_type: registry_type.to_string(),
+                current_file_index: 1,
+                max_people_per_file: 10,
+                recently_saved_files: Vec::new(),
+                current_filename: None,
+                date_folder: None,
             }
         }
     };
     
-    // Ensure directories exist from the start
+    // Ensure base directories exist
     if let Err(e) = generator.ensure_directories() {
         println!("❌ Error creating directories: {}", e);
         println!("Please check permissions or manually create:");
@@ -497,79 +900,233 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Err(e);
     }
     
-    println!("📂 Working in directory: {:?}", generator.get_registry_dir());
+    println!("📂 Base directory: {:?}", generator.get_registry_dir());
     
-    println!("\nChoose option:");
-    println!("1. Create new {} registry", registry_type);
-    println!("2. Load existing {} registry", registry_type);
+    // Date folder selection
+    println!("\n📅 Date Folder Selection:");
+    println!("1. Create new date folder (today's date)");
+    println!("2. Select existing date folder");
+    println!("3. Don't use a date folder (save directly in registry folder)");
     
-    let mut choice = String::new();
-    io::stdin().read_line(&mut choice)?;
+    let mut date_choice = String::new();
+    io::stdin().read_line(&mut date_choice)?;
     
-    let filename = match choice.trim() {
+    match date_choice.trim() {
         "1" => {
-            let filename = generator.generate_filename();
-            println!("\n📄 Creating new {} registry: {}", registry_type, filename);
-            filename
+            // Create new date folder for today
+            match generator.create_date_folder(None) {
+                Ok(folder_name) => {
+                    println!("✅ Created/using date folder: {}", folder_name);
+                }
+                Err(e) => {
+                    println!("❌ Error creating date folder: {}", e);
+                    println!("   Will save directly in registry folder.");
+                }
+            }
         }
         "2" => {
-            match generator.list_existing_markdown_files() {
-                Ok(files) => {
-                    if files.is_empty() {
-                        println!("\n⚠️  No existing {} registries found.", registry_type);
-                        let filename = generator.generate_filename();
-                        println!("   Creating new registry: {}", filename);
-                        filename
+            // List existing date folders
+            match generator.list_date_folders() {
+                Ok(folders) => {
+                    if folders.is_empty() {
+                        println!("⚠️  No existing date folders found.");
+                        println!("   Creating new one for today...");
+                        generator.create_date_folder(None)?;
                     } else {
-                        println!("\n📂 Existing {} registries:", registry_type);
-                        for (i, file) in files.iter().enumerate() {
-                            println!("   {}. {}", i + 1, file);
+                        println!("\n📋 Existing date folders:");
+                        for (i, folder) in folders.iter().enumerate() {
+                            println!("   {}. {}", i + 1, folder);
                         }
                         
-                        println!("\nEnter the number of the registry to load:");
-                        let mut file_choice = String::new();
-                        io::stdin().read_line(&mut file_choice)?;
+                        println!("\nEnter the number of the folder to use:");
+                        let mut folder_choice = String::new();
+                        io::stdin().read_line(&mut folder_choice)?;
                         
-                        if let Ok(choice_num) = file_choice.trim().parse::<usize>() {
-                            if choice_num >= 1 && choice_num <= files.len() {
-                                let filename = files[choice_num - 1].clone();
-                                if let Err(e) = generator.load_existing_markdown(&filename) {
-                                    println!("⚠️  Error loading file: {}", e);
-                                    println!("   Creating new registry instead.");
-                                    generator.generate_filename()
-                                } else {
-                                    println!("✓ Loaded registry: {}", filename);
-                                    filename
-                                }
+                        if let Ok(choice_num) = folder_choice.trim().parse::<usize>() {
+                            if choice_num >= 1 && choice_num <= folders.len() {
+                                let folder_name = &folders[choice_num - 1];
+                                generator.date_folder = Some(folder_name.clone());
+                                println!("✅ Selected date folder: {}", folder_name);
                             } else {
-                                println!("⚠️  Invalid choice. Creating new registry.");
-                                generator.generate_filename()
+                                println!("⚠️  Invalid choice. Creating new folder.");
+                                generator.create_date_folder(None)?;
                             }
                         } else {
-                            println!("⚠️  Invalid input. Creating new registry.");
-                            generator.generate_filename()
+                            println!("⚠️  Invalid input. Creating new folder.");
+                            generator.create_date_folder(None)?;
                         }
                     }
                 }
                 Err(e) => {
-                    println!("⚠️  Error listing files: {}", e);
-                    println!("   Creating new registry.");
-                    generator.generate_filename()
+                    println!("❌ Error listing date folders: {}", e);
+                    println!("   Creating new folder.");
+                    generator.create_date_folder(None)?;
                 }
             }
         }
-        _ => {
-            println!("⚠️  Invalid choice. Creating new registry.");
-            generator.generate_filename()
+        "3" => {
+            println!("📁 Will save directly in registry folder.");
         }
-    };
+        _ => {
+            println!("⚠️  Invalid choice. Creating new date folder.");
+            generator.create_date_folder(None)?;
+        }
+    }
+    
+    // Now ensure the selected date folder exists
+    if let Err(e) = generator.ensure_directories() {
+        println!("❌ Error creating date folder: {}", e);
+        return Err(e);
+    }
+    
+    println!("📂 Working in directory: {:?}", generator.get_current_working_dir());
+    
+    // Load all existing data from ALL FOLDERS for this registry type
+    println!("\n📥 Loading all existing {} data from ALL folders...", registry_type);
+    match generator.load_all_existing_files_across_all_folders() {
+        Ok(_) => {
+            println!("✓ Loaded {} unique roster(s) from all folders", generator.all_people.len());
+        }
+        Err(e) => {
+            println!("⚠️  Could not load existing data: {}", e);
+            println!("   Starting with empty registry.");
+        }
+    }
+    
+    // Look for incomplete files (only in the selected folder)
+    match generator.find_incomplete_files() {
+        Ok(incomplete_files) => {
+            if !incomplete_files.is_empty() {
+                println!("\n📋 Found {} incomplete file(s) in current folder:", incomplete_files.len());
+                for (i, (file, _count)) in incomplete_files.iter().enumerate() {
+                    println!("   {}. {} (incomplete)", i + 1, file);
+                }
+                
+                println!("\nChoose an option:");
+                println!("1. Continue with the most recent incomplete file");
+                println!("2. Start a new file");
+                println!("3. Select a specific file from the list");
+                
+                let mut file_choice = String::new();
+                io::stdin().read_line(&mut file_choice)?;
+                
+                match file_choice.trim() {
+                    "1" => {
+                        // Use the most recent incomplete file
+                        if let Some((filename, _count)) = incomplete_files.last() {
+                            println!("\n📝 Continuing with: {}", filename);
+                            if let Err(e) = generator.load_file_for_editing(filename) {
+                                println!("❌ Error loading file: {}", e);
+                                println!("   Starting new file instead.");
+                            }
+                        }
+                    }
+                    "2" => {
+                        println!("\n📄 Starting new file...");
+                        match generator.get_next_file_number() {
+                            Ok(num) => generator.current_file_index = num,
+                            Err(_) => generator.current_file_index = 1,
+                        }
+                    }
+                    "3" => {
+                        println!("\nEnter the number of the file to continue:");
+                        let mut num_choice = String::new();
+                        io::stdin().read_line(&mut num_choice)?;
+                        
+                        if let Ok(choice_num) = num_choice.trim().parse::<usize>() {
+                            if choice_num >= 1 && choice_num <= incomplete_files.len() {
+                                let (filename, _) = &incomplete_files[choice_num - 1];
+                                println!("\n📝 Continuing with: {}", filename);
+                                if let Err(e) = generator.load_file_for_editing(filename) {
+                                    println!("❌ Error loading file: {}", e);
+                                    println!("   Starting new file instead.");
+                                }
+                            } else {
+                                println!("⚠️  Invalid choice. Starting new file.");
+                                match generator.get_next_file_number() {
+                                    Ok(num) => generator.current_file_index = num,
+                                    Err(_) => generator.current_file_index = 1,
+                                }
+                            }
+                        } else {
+                            println!("⚠️  Invalid input. Starting new file.");
+                            match generator.get_next_file_number() {
+                                Ok(num) => generator.current_file_index = num,
+                                Err(_) => generator.current_file_index = 1,
+                            }
+                        }
+                    }
+                    _ => {
+                        println!("⚠️  Invalid choice. Starting new file.");
+                        match generator.get_next_file_number() {
+                            Ok(num) => generator.current_file_index = num,
+                            Err(_) => generator.current_file_index = 1,
+                        }
+                    }
+                }
+            } else {
+                println!("\n📋 No incomplete files found in current folder.");
+                println!("📄 Starting new file...");
+                match generator.get_next_file_number() {
+                    Ok(num) => generator.current_file_index = num,
+                    Err(_) => generator.current_file_index = 1,
+                }
+            }
+        }
+        Err(e) => {
+            println!("⚠️  Error checking for incomplete files: {}", e);
+            println!("📄 Starting new file...");
+            match generator.get_next_file_number() {
+                Ok(num) => generator.current_file_index = num,
+                Err(_) => generator.current_file_index = 1,
+            }
+        }
+    }
     
     println!("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     println!("Enter person details (type 'save' to finish):");
+    if let Some(ref filename) = generator.current_filename {
+        println!("📄 Current file: {}", filename);
+    } else {
+        println!("📄 Next file will be: {}", generator.generate_filename(None));
+    }
+    if let Some(ref date_folder) = generator.date_folder {
+        println!("📁 Date folder: {}", date_folder);
+    }
+    println!("📊 Unique people in ALL {} folders: {}", registry_type, generator.all_people.len());
+    println!("🔍 Checking against {} known rosters", generator.used_rosters.len());
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     
+    let mut files_created = Vec::new();
+    
     loop {
+        // Check if we need to create a new file
+        if generator.should_create_new_file() {
+            println!("\n📦 Current batch is full ({} people)", generator.max_people_per_file);
+            println!("   Saving current file...");
+            
+            match generator.save_current_batch() {
+                Ok(filename) => {
+                    files_created.push(filename.clone());
+                    println!("✅ Saved file: {}", filename);
+                    println!("📝 Starting new batch...");
+                    println!("📄 Next file will be: {}", generator.generate_filename(None));
+                    
+                    // Show updated totals
+                    println!("📊 Registry now has {} unique people across all folders", generator.all_people.len());
+                    println!("   (Checking against {} known rosters)", generator.used_rosters.len());
+                }
+                Err(e) => {
+                    println!("❌ Error saving file: {}", e);
+                }
+            }
+        }
+        
         println!("\n👤 Name (or 'save' to finish):");
+        println!("   [Current batch: {}/{} people]", 
+                generator.people.len(), generator.max_people_per_file);
+        println!("   [Unique people in ALL {} folders: {}]", registry_type, generator.all_people.len());
+        
         let mut name = String::new();
         io::stdin().read_line(&mut name)?;
         let name = name.trim();
@@ -595,6 +1152,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                 println!("   │ Name: {:16} │", person.name);
                 println!("   │ Roster: {:14} │", person.roster);
                 println!("   │ Birth Date: {:11} │", person.birth_date);
+                println!("   │ Batch: {:3}/{}         │", 
+                        generator.people.len(), generator.max_people_per_file);
+                println!("   │ Unique total: {:7} │", generator.all_people.len());
                 println!("   └─────────────────────┘");
             }
             Err(e) => {
@@ -604,29 +1164,74 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     }
     
-    println!("\n💾 Saving registry...");
-    match generator.save_to_markdown(&filename) {
-        Ok(_) => {
-            println!("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-            println!("✅ Registry saved successfully!");
-            println!("📂 Directory: {:?}", generator.get_registry_dir());
-            println!("📄 File: {}", filename);
-            println!("👥 Total entries: {}", generator.people.len());
-            println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-            
-            // Show the exact path for easy access
-            let full_path = generator.get_registry_dir().join(&filename);
-            println!("\n📍 Full path: {:?}", full_path);
-        }
-        Err(e) => {
-            println!("\n❌ Error saving file: {}", e);
-            println!("\nTroubleshooting:");
-            println!("1. Check if you have write permissions to: {:?}", generator.base_dir);
-            println!("2. Try creating the directory manually:");
-            println!("   mkdir -p {:?}", generator.get_registry_dir());
-            println!("3. Or run the program from a different location");
+    // Save any remaining people
+    if !generator.people.is_empty() {
+        println!("\n💾 Saving current batch of {} people...", generator.people.len());
+        match generator.save_current_batch() {
+            Ok(filename) => {
+                files_created.push(filename.clone());
+                println!("✅ Saved file: {}", filename);
+            }
+            Err(e) => {
+                println!("❌ Error saving final batch: {}", e);
+            }
         }
     }
+    
+    // Don't do final reload - it would create duplicates
+    println!("\n📊 Final counts:");
+    println!("  Unique people in ALL {} folders: {}", registry_type, generator.all_people.len());
+    println!("  Known rosters for collision checking: {}", generator.used_rosters.len());
+    
+    // Summary
+    println!("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!("✅ Registry update complete!");
+    println!("📂 Working directory: {:?}", generator.get_current_working_dir());
+    
+    if !files_created.is_empty() {
+        println!("\n📄 Files saved/updated:");
+        for file in &files_created {
+            println!("   • {}", file);
+        }
+    } else {
+        println!("\n📄 No changes saved (no data entered)");
+    }
+    
+    println!("\n📊 Summary:");
+    println!("   • Unique people in ALL {} folders: {}", registry_type, generator.all_people.len());
+    println!("   • Unique birth dates: {}", generator.date_to_rosters.len());
+    println!("   • Known rosters for collision checking: {}", generator.used_rosters.len());
+    println!("   • People per file limit: {}", generator.max_people_per_file);
+    
+    // Show the next available file number
+    let next_file_num = match generator.get_next_file_number() {
+        Ok(num) => num,
+        Err(_) => 1,
+    };
+    println!("   • Next file number: {}", next_file_num);
+    
+    // List all files in the current working directory
+    match generator.list_existing_markdown_files() {
+        Ok(files) => {
+            println!("   • Total files in current directory: {}", files.len());
+            
+            // Show incomplete files for next time
+            match generator.find_incomplete_files() {
+                Ok(incomplete) => {
+                    if !incomplete.is_empty() {
+                        println!("\n📋 Incomplete files in current folder for next session:");
+                        for (file, count) in incomplete {
+                            println!("   • {} ({} of {} people)", file, count, generator.max_people_per_file);
+                        }
+                    }
+                }
+                Err(_) => {}
+            }
+        }
+        Err(_) => {}
+    }
+    
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     
     Ok(())
 }
