@@ -1,0 +1,3 @@
+[workspace]
+members = ["roster-core", "roster-gen", "roster-select"]
+resolver = "2"
