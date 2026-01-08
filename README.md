@@ -56,9 +56,9 @@ These rights cannot be revoked or restricted by any entity.
 These programs are designed for selecting participants in sortition processes
 for Citizens' and Workers' Branches in democratic systems.
 
-The system consists of two applications:
+The system consists of two complementary applications:
 1. **Roster Generator**: Creates unique roster codes from registration data
-2. **Roster Selector**: Performs random selection from registered rosters
+2. **Roster Selector**: Performs weighted random selection from registered rosters
 
 ## Security Advisory
 **IMPORTANT**: These programs are functional prototypes, not production-grade systems.
@@ -77,51 +77,84 @@ The system consists of two applications:
 ### Current Architecture
 - **Language**: Rust (prototype phase)
 - **Storage**: Local Markdown files with roster data
-- **Scale**: Up to 1,000 entries per file, with multi-file scanning capability
-- **Roster Codes**: 8-character unique identifiers derived from birth dates
+- **Registry Types**: Citizens and Workers registries
+- **File Organization**: Date-based folder structure with automatic organization
+- **Roster Codes**: 8-character unique identifiers derived from birth dates with collision prevention
+- **Selection Limits**: Maximum 4 selections per person, weighted random algorithm
+
+### Two-Application System
+
+#### 1. Roster Generator
+- **Purpose**: Creates and manages roster entries
+- **Key Features**:
+  - Generates unique 8-character roster codes from birth dates
+  - Organizes files by date folders (e.g., `citizens-2024-12-20`)
+  - Limits to 10 people per file (auto-splits when full)
+  - Prevents duplicate roster codes across all files
+  - Tracks unique people across entire registry
+
+#### 2. Roster Selector
+- **Purpose**: Selects participants from existing rosters
+- **Key Features**:
+  - Scans ALL files across ALL date folders
+  - Weighted random selection (less-selected people have higher chance)
+  - Enforces 4-selection maximum per person
+  - Updates selection counts in original files
+  - Shows available vs. maxed-out statistics
 
 ### File Structure
 
 ~/Documents/md-data/
-├── citizens/
-│ ├── citizens_2024_12_27_143022.md
-│ └── citizens_2024_12_28_093045.md
-└── workers/
-└── workers_2024_12_27_152118.md
+├── citizens/ # Citizens registry
+│ ├── citizens_001_2024_12_27_143022.md
+│ ├── citizens_002_2024_12_28_093045.md
+│ └── citizens-2024-12-20/ # Date-based organization
+│ ├── citizens_001_2024_12_20_121000.md
+│ └── citizens_002_2024_12_20_121500.md
+└── workers/ # Workers registry
+├── workers_001_2024_12_27_152118.md
+└── workers-2024-12-20/
+└── workers_001_2024_12_20_131000.md
 
-### Future Development Path
-**Short-term improvements:**
-- Enhanced multi-file scanning to prevent duplicates across files
-- Better error handling and validation
-- Improved human-readable reports
+### File Format
+Each roster file contains:
+- **Header**: Metadata (registry type, date, counts)
+- **Table**: Name, Roster Code, Birth Date, Times Selected
+- **Statistics**: File and registry-level statistics
+- **Footer**: Generation information and limits
 
-**Long-term migration:**
-- Core selection algorithms → **SPARK** (formal verification)
-- Application logic → **Ada** (high-reliability systems)
-- Target architectures: **ARM** and **RISC-V** (open specifications)
-
-**Rationale**: SPARK provides mathematical proof of correctness for critical functions,
-while Ada offers strong typing and reliability features. Open architectures like
-RISC-V allow independent verification of hardware implementations.
+### Data Integrity Features
+- **Duplicate Prevention**: Hash-based roster code collision detection
+- **Cross-File Validation**: Scans all files/folders for duplicates
+- **In-Place Updates**: Selection counts updated directly in source files
+- **Automatic Organization**: Date folders for chronological organization
 
 ## Installation & Usage
 
-### Prerequisites
+## Prerequisites
 - Rust 1.70 or higher
 - Standard build tools for your platform
 
-### Building from Source
+## Building Both Applications
+
+### Clone the repository
+
 ```bash
 git clone https://codeberg.org/GeaucefStone/Sortition.git
 cd Sortition
-cargo build --release 
 ```
 
-### This Markdown file includes:
+### Build both applications
 
-1. **Legal compliance** (copyright, GPL v3, warranty disclaimer)
-2. **Clear anti-monopolization language** you requested
-3. **Technical details** about the two-app architecture
-4. **Security warnings** and practical guidance
-5. **Contribution guidelines** with legal protection
-6. **Performance considerations** for various deployment scenarios
+```bash
+# Enter the roster-gen directory
+cd roster-gen
+cargo build --release
+
+# To return to the previous directory
+cd ..
+
+# Enter the roster-selector directory
+cd roster-selector  
+cargo build --release
+```
