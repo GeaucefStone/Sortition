@@ -1,3 +1,8 @@
-[workspace]
-members = ["roster-core", "roster-gen", "roster-select"]
-resolver = "2"
+[package]
+name = "roster-select"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+roster-core = { path = "../roster-core" }
+chrono = "0.4"  # Needed for Local::now()
