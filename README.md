@@ -155,6 +155,6 @@ cargo build --release
 cd ..
 
 # Enter the roster-selector directory
-cd roster-selector  
+cd roster-select
 cargo build --release
 ```
