@@ -103,18 +103,19 @@ The system consists of two complementary applications:
   - Shows available vs. maxed-out statistics
 
 ### File Structure
-
+```bash
 ~/Documents/md-data/
-├── citizens/ # Citizens registry
-│ ├── citizens_001_2024_12_27_143022.md
-│ ├── citizens_002_2024_12_28_093045.md
-│ └── citizens-2024-12-20/ # Date-based organization
-│ ├── citizens_001_2024_12_20_121000.md
-│ └── citizens_002_2024_12_20_121500.md
-└── workers/ # Workers registry
-├── workers_001_2024_12_27_152118.md
-└── workers-2024-12-20/
-└── workers_001_2024_12_20_131000.md
+├── citizens/                          # Citizens registry
+│   ├── citizens_001_2024_12_27_143022.md
+│   ├── citizens_002_2024_12_28_093045.md
+│   └── citizens-2024-12-20/          # Date-based organization
+│       ├── citizens_001_2024_12_20_121000.md
+│       └── citizens_002_2024_12_20_121500.md
+└── workers/                          # Workers registry
+    ├── workers_001_2024_12_27_152118.md
+    └── workers-2024-12-20/
+        └── workers_001_2024_12_20_131000.md
+```
 
 ### File Format
 Each roster file contains:
