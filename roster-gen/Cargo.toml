@@ -1,9 +1,8 @@
 [package]
 name = "roster-gen"
-version = "0.2.0"
+version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-chrono = { version = "0.4", features = ["serde"] }
-serde = { version = "1.0", features = ["derive"] }
-dirs = "4.0"
+roster-core = { path = "../roster-core" }
+chrono = "0.4"
