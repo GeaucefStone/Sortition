@@ -186,7 +186,6 @@ The workspace contains:
 # Run the roster generator
 ./target/release/roster-gen
 ```
-Step 3: Understanding the Flow
 
 ### Step 3: Understanding the Flow
 
