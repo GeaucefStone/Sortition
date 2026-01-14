@@ -18,12 +18,32 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/gpl-3.0.html>.
 
+## Plugin/Extension Exception
+
+### GNU GPL v3 Linking Exception for Future Plugins
+
+**Section 7 Exception for Future Plugin System**: Notwithstanding any other provision of the GNU General Public License, 
+you have permission to link this program with independent modules ("Plugins") that communicate with the 
+program solely through a future plugin application programming interface (API), regardless of the license terms of these 
+independent modules, provided that:
+
+1. The independent modules are not derivative works of this program's core functionality
+2. The independent modules do not incorporate any portion of this program's source code
+3. The independent modules communicate with this program only through a documented, 
+   versioned plugin API (to be implemented in future releases)
+4. The independent modules are clearly distinguished from the core program
+5. The independent modules do not circumvent the normal execution flow or licensing of this program
+
+**Current Status**: This exception is established for future compatibility. No plugin API currently exists in this version.
+
 ## How to Apply This License to Your Work
 To apply this license to your modifications or distributions:
+
 1. Preserve this copyright notice and license text
 2. State any significant changes made to the original
 3. Keep all notices that refer to this License and to the absence of any warranty
 4. Provide recipients with a copy of the GNU GPL v3
+5. Include this plugin exception clause if distributing modified versions
 
 ## No Warranty
 **THIS SOFTWARE IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
@@ -35,22 +55,19 @@ OR OTHER DEALINGS IN THE SOFTWARE.**
 
 ## Protection Against Monopolization
 
-### Legal Protection (GPL v3)
-The GNU General Public License v3 provides strong legal safeguards:
-- **No proprietary forks**: Anyone modifying this software must share changes
-- **No exclusive ownership claims**: No entity can claim sole ownership or prevent others from using it
-- **Permanent freedom**: The software remains freely available forever
-- **No vendor lock-in**: No single organization can control access or create closed versions
+### Legal Protection (GPL v3 + Future Plugin Exception)
+The GNU General Public License v3 with future plugin exception provides balanced legal safeguards:
 
-### Your Rights as a User
-Under GPL v3, you have the right to:
-1. Use the software for any lawful purpose
-2. Study how it works (source code is available)
-3. Modify it to meet your needs
-4. Share original or modified versions
-5. Share your improvements with others
+**Core Protection:**
+- **No proprietary forks**: Core program modifications must be shared
+- **No exclusive ownership claims**: Core program remains community-owned
+- **Permanent freedom**: Core source code remains freely available forever
+- **No vendor lock-in**: No single organization can control core access
 
-These rights cannot be revoked or restricted by any entity.
+**Future Plugin Flexibility:**
+- **Encourages future innovation**: Developers can plan for proprietary plugins
+- **Supports future integration**: Allows connection with other systems
+- **Promotes ecosystem growth**: Enables commercial extensions without compromising core freedoms
 
 ## Project Overview
 These programs are designed for selecting participants in sortition processes
@@ -59,6 +76,27 @@ for Citizens' and Workers' Branches in democratic systems.
 The system consists of two complementary applications:
 1. **Roster Generator**: Creates unique roster codes from registration data
 2. **Roster Selector**: Performs weighted random selection from registered rosters
+
+## ⚠️ Current Implementation Status
+**Version 0.1.5 - PROTOTYPE**
+
+### What EXISTS Now:
+- ✅ Core roster generation and management
+- ✅ File-based storage in Markdown format  
+- ✅ Weighted random selection algorithms
+- ✅ Date-based file organization
+- ✅ Duplicate prevention across files
+- ✅ Configuration system
+
+### What is PLANNED (Future Versions):
+- 🔄 **Plugin System**: Extensible architecture through plugins
+- 🔄 **Plugin API**: Documented interfaces for third-party extensions
+- 🔄 **Plugin Marketplace**: Ecosystem of community plugins
+- 🔄 **Web Interface**: Browser-based administration
+- 🔄 **Database Backend**: Optional database storage
+- 🔄 **Enhanced Security**: Encryption and access controls
+
+**Note**: The plugin exception clause is included for future compatibility but no plugin system currently exists.
 
 ## Security Advisory
 **IMPORTANT**: These programs are functional prototypes, not production-grade systems.
@@ -74,33 +112,34 @@ The system consists of two complementary applications:
 
 ## Technical Implementation
 
-### Current Architecture
+### Current Architecture (v0.1.0)
 - **Language**: Rust (prototype phase)
 - **Storage**: Local Markdown files with roster data
 - **Registry Types**: Citizens and Workers registries
 - **File Organization**: Date-based folder structure with automatic organization
 - **Roster Codes**: 8-character unique identifiers derived from birth dates with collision prevention
 - **Selection Limits**: Maximum 4 selections per person, weighted random algorithm
+- **Plugin System**: **Not yet implemented** (planned for future versions)
 
 ### Two-Application System
 
 #### 1. Roster Generator
 - **Purpose**: Creates and manages roster entries
 - **Key Features**:
-  - Generates unique 8-character roster codes from birth dates
-  - Organizes files by date folders (e.g., `citizens-2024-12-20`)
-  - Limits to 10 people per file (auto-splits when full)
-  - Prevents duplicate roster codes across all files
-  - Tracks unique people across entire registry
+  * Generates unique 8-character roster codes from birth dates
+  * Organizes files by date folders (e.g., `citizens-2024-12-20`)
+  * Limits to 10 people per file (auto-splits when full)
+  * Prevents duplicate roster codes across all files
+  * Tracks unique people across entire registry
 
 #### 2. Roster Selector
 - **Purpose**: Selects participants from existing rosters
 - **Key Features**:
-  - Scans ALL files across ALL date folders
-  - Weighted random selection (less-selected people have higher chance)
-  - Enforces 4-selection maximum per person
-  - Updates selection counts in original files
-  - Shows available vs. maxed-out statistics
+  * Scans ALL files across ALL date folders
+  * Weighted random selection (less-selected people have higher chance)
+  * Enforces 4-selection maximum per person
+  * Updates selection counts in original files
+  * Shows available vs. maxed-out statistics
 
 ### File Structure
 ```bash
@@ -117,45 +156,89 @@ The system consists of two complementary applications:
         └── workers_001_2024_12_20_131000.md
 ```
 
-### File Format
-Each roster file contains:
-- **Header**: Metadata (registry type, date, counts)
-- **Table**: Name, Roster Code, Birth Date, Times Selected
-- **Statistics**: File and registry-level statistics
-- **Footer**: Generation information and limits
+## Installation and Usage
 
-### Data Integrity Features
-- **Duplicate Prevention**: Hash-based roster code collision detection
-- **Cross-File Validation**: Scans all files/folders for duplicates
-- **In-Place Updates**: Selection counts updated directly in source files
-- **Automatic Organization**: Date folders for chronological organization
+### Prerequisites
 
-## Installation & Usage
+- Rust toolchain (install from rustup.rs)
+- Git or SVN (to clone the repository)
 
-## Prerequisites
-- Rust 1.70 or higher
-- Standard build tools for your platform
-
-## Building Both Applications
-
-### Clone the repository
+### Step 1: Download and Build
 
 ```bash
+# Clone the repository
 git clone https://codeberg.org/GeaucefStone/Sortition.git
 cd Sortition
-```
 
-### Build both applications
-
-```bash
-# Enter the roster-gen directory
-cd roster-gen
-cargo build --release
-
-# To return to the previous directory
-cd ..
-
-# Enter the roster-selector directory
-cd roster-select
+# Build all three components at once (this is a Rust workspace)
 cargo build --release
 ```
+
+The workspace contains:
+
+- roster-core - Shared library (internal)
+- roster-gen - Roster generator application
+- roster-select - Roster selector application
+
+### Step 2: Run the Applications
+
+```bash 
+# Run the roster generator
+./target/release/roster-gen
+```
+Step 3: Understanding the Flow
+
+### Step 3: Understanding the Flow
+
+1. **First run roster-gen** to create your roster files
+- Choose registry type (citizens or workers)
+- Enter names and birth dates (MM/DD/YYYY)
+- Files are automatically saved in ~/Documents/md-data/
+
+2. **Then run roster-select** to make selections
+- Choose the same registry type
+- View all available people
+- Make random selections
+- Selection counts are automatically updated
+
+### Step 4: Configure the System
+
+**Configuration File Location**
+
+When you first run either application, a configuration file is automatically created at:
+
+- Linux/macOS: ~/.config/roster/sortition.ron
+- Windows: %APPDATA%\roster\sortition.ron
+- Fallback: Current directory: ./.roster/sortition.ron
+
+**Viewing Current Configuration**
+
+Run either application and choose "Show configuration" from the menu to see your current settings.
+
+**Editing the Configuration File**
+
+The configuration file uses RON (Rusty Object Notation) format. Here's the default configuration:
+
+```rust
+RosterConfig(
+    registry_types: ["citizens", "workers"],
+    max_selections: 4,
+    max_people_per_file: 10,
+    roster_length: 8,
+    folder_date_format: "%Y-%m-%d",
+    file_date_format: "%Y_%m_%d",
+    time_format: "%H%M%S",
+    file_naming_template: "{registry}_{seq:03}_{datetime}.md",
+)
+```
+
+**Configuration Options Explained**
+
+1. **registry_types** - List of registry types you can create
+
+2. **max_selections** - Maximum times a person can be selected
+
+3. **max_people_per_file** - Auto-split files when they reach this size
+
+4. **roster_length** - Length of roster codes (1-20 characters)
+
